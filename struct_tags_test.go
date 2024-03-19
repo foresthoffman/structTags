@@ -31,7 +31,7 @@ type nestedTestStruct struct {
 	SlicedPtr *slicedTestStruct `json:"slicedPtr" custom:"sliced_ptr"`
 }
 
-func TestNewCustomMarshaler(t *testing.T) {
+func TestNewCustomMarshaller(t *testing.T) {
 	testCases := []struct {
 		Name           string
 		Input          any
@@ -45,7 +45,7 @@ func TestNewCustomMarshaler(t *testing.T) {
 			ExpectedOutput: "",
 		},
 		{
-			Name: "simple struct",
+			Name: "slice of nested structs",
 			Input: []nestedTestStruct{
 				{
 					Field1:   "testing",
@@ -105,11 +105,53 @@ func TestNewCustomMarshaler(t *testing.T) {
 {"field_1":"debugging","sliced":{"field_2":"taco","field_3":"tortilla","simple_items":[{"field_4":"stormy"}],"simple_items_ptr":{}},"sliced_ptr":{"field_2":"guacamole","field_3":"burrito","simple_items":[{"field_4":"tornado"}],"simple_items_ptr":{}}}
 `,
 		},
+		{
+			Name: "nested struct",
+			Input: nestedTestStruct{
+				Field1:   "testing",
+				Ignored1: "SUPERSECRET",
+				Sliced: slicedTestStruct{
+					Field2:   "critical",
+					Field3:   "another",
+					Ignored2: "shouldn't see me #1",
+					Items: []simpleTestStruct{
+						{
+							Field4:   "sunny",
+							Ignored3: "TOP_SECRET_TOKEN #1",
+						},
+					},
+				},
+				SlicedPtr: &slicedTestStruct{
+					Field2:   "special",
+					Field3:   "different",
+					Ignored2: "shouldn't see me #2",
+					Items: []simpleTestStruct{
+						{
+							Field4:   "cloudy",
+							Ignored3: "TOP_SECRET_TOKEN #2",
+						},
+					},
+				},
+			},
+			ExpectedError: nil,
+			ExpectedOutput: `{"field_1":"testing","sliced":{"field_2":"critical","field_3":"another","simple_items":[{"field_4":"sunny"}],"simple_items_ptr":{}},"sliced_ptr":{"field_2":"special","field_3":"different","simple_items":[{"field_4":"cloudy"}],"simple_items_ptr":{}}}
+`,
+		},
+		{
+			Name: "simple struct",
+			Input: simpleTestStruct{
+				Field4:   "cloudy",
+				Ignored3: "TOP_SECRET_TOKEN #2",
+			},
+			ExpectedError: nil,
+			ExpectedOutput: `{"field_4":"cloudy"}
+`,
+		},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.Name, func(t *testing.T) {
-			b, err := NewCustomMarshaler(targetCustomTag, ignoreTagWithValue).Marshal(testCase.Input)
+			b, err := NewCustomMarshaller(targetCustomTag, ignoreTagWithValue).Marshal(testCase.Input)
 			assert.Equal(t, testCase.ExpectedError, err)
 			assert.Equal(t, testCase.ExpectedOutput, string(b))
 		})

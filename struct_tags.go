@@ -1,3 +1,12 @@
+// Package struct_tags allows for marshalling non-JSON and third-party struct
+// tags. The standard JSON.Marshal() function cannot marshal custom tags, however
+// this package can.
+//
+// e.g. Third-party struct tags could look like the "db" tag below.
+//
+//   type MyStruct struct {
+//     Field string `json:"api_field" db:"db_field"`
+//   }
 package struct_tags
 
 import (
@@ -12,52 +21,67 @@ const (
 	ErrNilObject = "object was nil"
 )
 
-type CustomMarshaler struct {
+// fieldMetadata helps maintain the order of a temporary list of reflect.Value field objects.
+type fieldMetadata struct {
+	TagValue string
+	Value    reflect.Value
+}
+
+// CustomMarshaller allows for marshalling non-JSON and third-party struct tags.
+type CustomMarshaller struct {
 	TargetTag          string
 	IgnoreTagWithValue string
 }
 
-func NewCustomMarshaler(targetTag, ignoreTag string) *CustomMarshaler {
-	return &CustomMarshaler{
+// NewCustomMarshaller creates a new custom-tag marshalling instance.
+func NewCustomMarshaller(targetTag, ignoreTag string) *CustomMarshaller {
+	return &CustomMarshaller{
 		TargetTag:          targetTag,
 		IgnoreTagWithValue: ignoreTag,
 	}
 }
 
-func (m *CustomMarshaler) reflectStructFields(w io.Writer, v reflect.Value) {
+// reflectStructFields recursively searches for struct field tags and writes the
+// tagged key-value pair to the provided buffer.
+func (m *CustomMarshaller) reflectStructFields(w io.Writer, v reflect.Value) {
 	if v == reflect.Zero(reflect.TypeOf(v)).Interface() {
 		return
 	}
 
-	fields := map[string]reflect.Value{}
+	// Remove ignored fields and ensure that the order of the fields won't change.
+	fields := map[int]fieldMetadata{}
+	count := 0
 	for j := 0; j < v.NumField(); j++ {
 		tagValue := v.Type().Field(j).Tag.Get(m.TargetTag)
 		if tagValue == m.IgnoreTagWithValue {
 			continue
 		}
-		fields[tagValue] = v.Field(j)
+		fields[count] = fieldMetadata{
+			TagValue: tagValue,
+			Value:    v.Field(j),
+		}
+		count++
 	}
 
-	i := 0
-	for tag, field := range fields {
-		switch field.Type().Kind() {
+	for i := 0; i < len(fields); i++ {
+		switch fields[i].Value.Type().Kind() {
 		case reflect.Struct:
-			w.Write([]byte(fmt.Sprintf("%q:", tag)))
+			w.Write([]byte(fmt.Sprintf("%q:", fields[i].TagValue)))
 			w.Write([]byte("{"))
-			m.reflectStructFields(w, field)
+			m.reflectStructFields(w, fields[i].Value)
 			w.Write([]byte("}"))
 		case reflect.Ptr:
-			w.Write([]byte(fmt.Sprintf("%q:", tag)))
+			w.Write([]byte(fmt.Sprintf("%q:", fields[i].TagValue)))
 			w.Write([]byte("{"))
-			m.reflectStructFields(w, field.Elem())
+			m.reflectStructFields(w, fields[i].Value.Elem())
 			w.Write([]byte("}"))
 		case reflect.Slice:
-			w.Write([]byte(fmt.Sprintf("%q:", tag)))
+			w.Write([]byte(fmt.Sprintf("%q:", fields[i].TagValue)))
 			w.Write([]byte("["))
-			numItems := field.Len()
+			numItems := fields[i].Value.Len()
 			for x := 0; x < numItems; x++ {
 				w.Write([]byte("{"))
-				m.reflectStructFields(w, field.Index(x))
+				m.reflectStructFields(w, fields[i].Value.Index(x))
 				w.Write([]byte("}"))
 				if x+1 < numItems {
 					w.Write([]byte(","))
@@ -65,16 +89,18 @@ func (m *CustomMarshaler) reflectStructFields(w io.Writer, v reflect.Value) {
 			}
 			w.Write([]byte("]"))
 		default:
-			w.Write([]byte(fmt.Sprintf("%q:%q", tag, field.String())))
+			w.Write([]byte(fmt.Sprintf("%q:%q", fields[i].TagValue, fields[i].Value.String())))
 		}
 		if i+1 < len(fields) {
 			w.Write([]byte(","))
 		}
-		i++
 	}
 }
 
-func (m *CustomMarshaler) Marshal(obj interface{}) ([]byte, error) {
+// Marshal takes the provided object and JSON-marshals it using the
+// pre-configured target tag and ignored tag values. Normal JSON struct tags will
+// not be used.
+func (m *CustomMarshaller) Marshal(obj interface{}) ([]byte, error) {
 	if obj == nil {
 		return nil, errors.New(ErrNilObject)
 	}
