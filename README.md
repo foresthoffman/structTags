@@ -29,6 +29,7 @@ import(
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/foresthoffman/structTags"
 )
@@ -47,13 +48,22 @@ func main() {
 		Ignored: "super-secret-value",
 	}
 
+	// custom-tag marshalling...
 	m := structTags.NewCustomMarshaller(targetThisTag, ignoreThisTagValue)
 	b, err := m.Marshal(s)
 	if err != nil {
 		panic(err)
-    }
+	}
 	fmt.Print(string(b))
-	//
+	// Output: {"custom_field":"some string"}
+
+	// versus JSON marshalling...
+	b, err = json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Print(string(b))
+	// Output: {"api_field":"some string","ignored":"super-secret-value"}
 }
 ```
 
