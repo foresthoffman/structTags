@@ -1,4 +1,4 @@
-module github.com/foresthoffman/struct-tags
+module github.com/foresthoffman/structTags
 
 go 1.18
 

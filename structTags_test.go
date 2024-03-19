@@ -1,4 +1,4 @@
-package struct_tags
+package structTags
 
 import (
 	"errors"

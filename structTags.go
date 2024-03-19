@@ -1,13 +1,14 @@
-// Package struct_tags allows for marshalling non-JSON and third-party struct
+// Package structTags allows for marshalling non-JSON and third-party struct
 // tags. The standard JSON.Marshal() function cannot marshal custom tags, however
 // this package can.
 //
-// e.g. Third-party struct tags could look like the "db" tag below.
+// e.g. Third-party struct tags could look like the "custom" tag below.
 //
-//   type MyStruct struct {
-//     Field string `json:"api_field" db:"db_field"`
-//   }
-package struct_tags
+//  type MyStruct struct {
+//    Field string `json:"api_field" custom:"custom_field"`
+//    Ignored string `json:"ignored" custom:"-"`
+//  }
+package structTags
 
 import (
 	"bytes"
