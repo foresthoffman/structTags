@@ -98,8 +98,7 @@ func (m *CustomMarshaller) reflectStructFields(w io.Writer, v reflect.Value) {
 }
 
 // Marshal takes the provided object and JSON-marshals it using the
-// pre-configured target tag and ignored tag values. Normal JSON struct tags will
-// not be used.
+// pre-configured target tag and ignored tag values.
 func (m *CustomMarshaller) Marshal(obj interface{}) ([]byte, error) {
 	if obj == nil {
 		return nil, errors.New(ErrNilObject)
