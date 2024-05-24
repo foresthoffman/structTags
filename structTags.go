@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
+	"strconv"
 )
 
 const (
@@ -42,91 +44,184 @@ func NewCustomMarshaller(targetTag, ignoreTag string) *CustomMarshaller {
 	}
 }
 
-// reflectStructFields recursively searches for struct field tags and writes the
-// tagged key-value pair to the provided buffer.
-func (m *CustomMarshaller) reflectStructFields(w io.Writer, v reflect.Value) {
-	if v == reflect.Zero(reflect.TypeOf(v)).Interface() {
-		return
+func (m *CustomMarshaller) marshal(w io.Writer, obj interface{}, top bool) error {
+	if obj == nil {
+		return errors.New(ErrNilObject)
 	}
 
-	// Remove ignored fields and ensure that the order of the fields won't change.
-	fields := map[int]fieldMetadata{}
-	count := 0
-	for j := 0; j < v.NumField(); j++ {
-		tagValue := v.Type().Field(j).Tag.Get(m.TargetTag)
-		if tagValue == m.IgnoreTagWithValue {
-			continue
-		}
-		fields[count] = fieldMetadata{
-			TagValue: tagValue,
-			Value:    v.Field(j),
-		}
-		count++
+	v := reflect.ValueOf(obj)
+	t := reflect.TypeOf(obj)
+	if val, ok := obj.(reflect.Value); ok {
+		v = val
+		t = val.Type()
 	}
+	k := t.Kind()
 
-	for i := 0; i < len(fields); i++ {
-		switch fields[i].Value.Type().Kind() {
-		case reflect.Struct:
-			w.Write([]byte(fmt.Sprintf("%q:", fields[i].TagValue)))
-			w.Write([]byte("{"))
-			m.reflectStructFields(w, fields[i].Value)
-			w.Write([]byte("}"))
-		case reflect.Ptr:
-			w.Write([]byte(fmt.Sprintf("%q:", fields[i].TagValue)))
-			w.Write([]byte("{"))
-			m.reflectStructFields(w, fields[i].Value.Elem())
-			w.Write([]byte("}"))
-		case reflect.Slice:
-			w.Write([]byte(fmt.Sprintf("%q:", fields[i].TagValue)))
-			w.Write([]byte("["))
-			numItems := fields[i].Value.Len()
-			for x := 0; x < numItems; x++ {
-				w.Write([]byte("{"))
-				m.reflectStructFields(w, fields[i].Value.Index(x))
-				w.Write([]byte("}"))
-				if x+1 < numItems {
-					w.Write([]byte(","))
+	if k == reflect.Struct {
+		// Remove ignored fields and ensure that the order of the fields won't change.
+		fields := map[int]fieldMetadata{}
+		count := 0
+		for i := 0; i < v.NumField(); i++ {
+			tagValue := v.Type().Field(i).Tag.Get(m.TargetTag)
+			if tagValue == m.IgnoreTagWithValue {
+				continue
+			}
+			fields[count] = fieldMetadata{
+				TagValue: tagValue,
+				Value:    v.Field(i),
+			}
+			count++
+		}
+
+		_, err := w.Write([]byte("{"))
+		if err != nil {
+			return err
+		}
+		for x := 0; x < len(fields); x++ {
+			_, err = w.Write([]byte(fmt.Sprintf("%q:", fields[x].TagValue)))
+			if err != nil {
+				return err
+			}
+			err = m.marshal(w, fields[x].Value, false)
+			if err != nil {
+				return fmt.Errorf("failed to marshal struct field: %s", err.Error())
+			}
+			if x+1 < len(fields) {
+				_, err = w.Write([]byte(","))
+				if err != nil {
+					return err
 				}
 			}
-			w.Write([]byte("]"))
-		default:
-			w.Write([]byte(fmt.Sprintf("%q:%q", fields[i].TagValue, fields[i].Value.String())))
 		}
-		if i+1 < len(fields) {
-			w.Write([]byte(","))
+		_, err = w.Write([]byte("}"))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.Slice {
+		_, err := w.Write([]byte("["))
+		if err != nil {
+			return err
+		}
+		for i := 0; i < v.Len(); i++ {
+			if err != nil {
+				return err
+			}
+			err = m.marshal(w, v.Index(i), false)
+			if err != nil {
+				return fmt.Errorf("failed to marshal slice element: %s", err.Error())
+			}
+			if i+1 < v.Len() {
+				_, err = w.Write([]byte(","))
+				if err != nil {
+					return err
+				}
+			}
+		}
+		_, err = w.Write([]byte("]"))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.Map {
+		_, err := w.Write([]byte("{"))
+		if err != nil {
+			return err
+		}
+		var keys []string
+		for _, key := range v.MapKeys() {
+			keys = append(keys, key.String())
+		}
+		sort.Strings(keys)
+		for i := 0; i < len(keys); i++ {
+			_, err = w.Write([]byte(fmt.Sprintf("%q:", keys[i])))
+			if err != nil {
+				return err
+			}
+			err = m.marshal(w, v.MapIndex(reflect.ValueOf(keys[i])), false)
+			if err != nil {
+				return fmt.Errorf("failed to marshal map field: %s", err.Error())
+			}
+			if i+1 < v.Len() {
+				_, err = w.Write([]byte(","))
+				if err != nil {
+					return err
+				}
+			}
+		}
+		_, err = w.Write([]byte("}"))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.Ptr {
+		err := m.marshal(w, v.Elem(), false)
+		if err != nil {
+			return fmt.Errorf("failed to marshal ptr: %s", err.Error())
+		}
+	} else if k == reflect.Interface {
+		err := m.marshal(w, v.Interface(), false)
+		if err != nil {
+			return fmt.Errorf("failed to marshal interface: %s", err.Error())
+		}
+	} else if k == reflect.Int || k == reflect.Int8 || k == reflect.Int16 || k == reflect.Int32 || k == reflect.Int64 {
+		_, err := w.Write([]byte(strconv.FormatInt(v.Int(), 10)))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.Uint || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 || k == reflect.Uintptr {
+		_, err := w.Write([]byte(strconv.FormatUint(v.Uint(), 10)))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.Float32 {
+		_, err := w.Write([]byte(strconv.FormatFloat(v.Float(), 'f', -1, 32)))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.Float64 {
+		_, err := w.Write([]byte(strconv.FormatFloat(v.Float(), 'f', -1, 64)))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.Complex64 || k == reflect.Complex128 {
+		_, err := w.Write([]byte(fmt.Sprint(v.Complex())))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.String {
+		_, err := w.Write([]byte(fmt.Sprintf("%q", v.String())))
+		if err != nil {
+			return err
+		}
+	} else if k == reflect.Bool {
+		_, err := w.Write([]byte(fmt.Sprintf("%v", v.Bool())))
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err := w.Write([]byte(v.String()))
+		if err != nil {
+			return err
 		}
 	}
+
+	// Perform top-level logic.
+	if top {
+		_, err := w.Write([]byte("\n"))
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	return nil
 }
 
 // Marshal takes the provided object and JSON-marshals it using the
 // pre-configured target tag and ignored tag values.
 func (m *CustomMarshaller) Marshal(obj interface{}) ([]byte, error) {
-	if obj == nil {
-		return nil, errors.New(ErrNilObject)
-	}
-
-	v := reflect.ValueOf(obj)
-	if val, ok := obj.(reflect.Value); ok {
-		v = val
-	}
-
 	w := bytes.NewBuffer([]byte{})
-	switch reflect.TypeOf(obj).Kind() {
-	case reflect.Struct:
-		w.Write([]byte("{"))
-		m.reflectStructFields(w, v)
-		w.Write([]byte("}\n"))
-	case reflect.Ptr:
-		w.Write([]byte("{"))
-		m.reflectStructFields(w, v.Elem())
-		w.Write([]byte("}\n"))
-	case reflect.Slice:
-		numItems := v.Len()
-		for i := 0; i < numItems; i++ {
-			w.Write([]byte("{"))
-			m.reflectStructFields(w, v.Index(i))
-			w.Write([]byte("}\n"))
-		}
+	err := m.marshal(w, obj, true)
+	if err != nil {
+		return nil, err
 	}
 
 	return w.Bytes(), nil
